@@ -8,6 +8,7 @@ class LatentSDE(nn.Module):
         super().__init__()
         self.latent_dim = latent_dim
         self.dt = dt
+        # Encoder: expects input of shape (batch, input_dim) where input_dim = seq_len * 1
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
@@ -32,10 +33,11 @@ class LatentSDE(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, input_dim)
+            nn.Linear(hidden_dim, 1)   # output single value (next return)
         )
 
     def encode(self, x):
+        # x: (batch, input_dim)
         params = self.encoder(x)
         mean, logvar = params.chunk(2, dim=-1)
         return mean, logvar
@@ -53,16 +55,27 @@ class LatentSDE(nn.Module):
         return z_next
 
     def forward(self, x, steps=10):
-        mean, logvar = self.encode(x)
+        # x: (batch, seq_len, 1) -> flatten to (batch, seq_len)
+        batch, seq_len, _ = x.shape
+        x_flat = x.view(batch, -1)   # (batch, seq_len)
+        mean, logvar = self.encode(x_flat)
         z = self.reparameterize(mean, logvar)
         for _ in range(steps):
             z = self.sde_step(z, self.dt)
-        pred = self.decoder(z)
+        pred = self.decoder(z).squeeze(-1)   # (batch,)
         return pred, mean, logvar
 
-def train_latent_sde(X_train, y_train, latent_dim=16, hidden_dim=32,
-                     dt=0.01, steps=10, lr=1e-3, epochs=50, batch_size=32, device='cpu', **kwargs):
-    input_dim = X_train.shape[1]
+def train_latent_sde(X_train, y_train, **kwargs):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    batch_size = kwargs.get('batch_size', 32)
+    epochs = kwargs.get('epochs', 50)
+    lr = kwargs.get('lr', 1e-3)
+    latent_dim = kwargs.get('latent_dim', 16)
+    hidden_dim = kwargs.get('hidden_dim', 32)
+    dt = kwargs.get('dt', 0.01)
+    steps = kwargs.get('steps', 10)
+    # input_dim = seq_len (because we flatten)
+    input_dim = X_train.shape[1] * X_train.shape[2]  # seq_len * 1 = seq_len
     model = LatentSDE(input_dim, latent_dim, hidden_dim, dt).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     X_t = torch.tensor(X_train, dtype=torch.float32).to(device)
@@ -76,7 +89,6 @@ def train_latent_sde(X_train, y_train, latent_dim=16, hidden_dim=32,
             Xb = X_t[batch_idx]
             yb = y_t[batch_idx]
             pred, mean, logvar = model(Xb, steps=steps)
-            pred = pred.squeeze()
             recon_loss = nn.MSELoss()(pred, yb)
             kl_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp()) / len(Xb)
             loss = recon_loss + 0.01 * kl_loss
@@ -93,4 +105,4 @@ def predict_latent_sde(model, X, steps=10):
     X_t = torch.tensor(X, dtype=torch.float32).to(next(model.parameters()).device)
     with torch.no_grad():
         pred, _, _ = model(X_t, steps=steps)
-    return pred.squeeze().cpu().numpy()
+    return pred.cpu().numpy()
