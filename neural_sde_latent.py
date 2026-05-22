@@ -60,12 +60,9 @@ class LatentSDE(nn.Module):
         pred = self.decoder(z)
         return pred, mean, logvar
 
-def train_latent_sde(X_train, y_train, input_dim, obs_dim=None, latent_dim=16, hidden_dim=32,
-                     dt=0.01, sde_steps=10, lr=1e-3, epochs=50, batch_size=32, device='cpu',
-                     drift_layers=None, diffusion_layers=None, **kwargs):
-    # obs_dim is alias for input_dim
-    if obs_dim is not None:
-        input_dim = obs_dim
+def train_latent_sde(X_train, y_train, latent_dim=16, hidden_dim=32,
+                     dt=0.01, steps=10, lr=1e-3, epochs=50, batch_size=32, device='cpu', **kwargs):
+    input_dim = X_train.shape[1]
     model = LatentSDE(input_dim, latent_dim, hidden_dim, dt).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     X_t = torch.tensor(X_train, dtype=torch.float32).to(device)
@@ -78,7 +75,7 @@ def train_latent_sde(X_train, y_train, input_dim, obs_dim=None, latent_dim=16, h
             batch_idx = indices[i:i+batch_size]
             Xb = X_t[batch_idx]
             yb = y_t[batch_idx]
-            pred, mean, logvar = model(Xb, steps=sde_steps)
+            pred, mean, logvar = model(Xb, steps=steps)
             pred = pred.squeeze()
             recon_loss = nn.MSELoss()(pred, yb)
             kl_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp()) / len(Xb)
