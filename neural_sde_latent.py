@@ -2,14 +2,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-from torch.distributions import Normal
 
 class LatentSDE(nn.Module):
     def __init__(self, input_dim, latent_dim=16, hidden_dim=32, dt=0.01):
         super().__init__()
         self.latent_dim = latent_dim
         self.dt = dt
-        # Encoder: returns -> latent mean, logvar
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
@@ -17,7 +15,6 @@ class LatentSDE(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, latent_dim * 2)
         )
-        # Drift function (neural net)
         self.drift = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
@@ -25,7 +22,6 @@ class LatentSDE(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, latent_dim)
         )
-        # Diffusion function (neural net) – output positive diagonal
         self.diffusion = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
@@ -33,11 +29,8 @@ class LatentSDE(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, latent_dim)
         )
-        # Decoder: latent -> predicted return
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, input_dim)
         )
@@ -67,9 +60,13 @@ class LatentSDE(nn.Module):
         pred = self.decoder(z)
         return pred, mean, logvar
 
-def train_latent_sde(X_train, y_train, obs_dim, latent_dim=16, hidden_dim=32,
-                     dt=0.01, steps=10, lr=1e-3, epochs=50, batch_size=32, device='cpu'):
-    model = LatentSDE(obs_dim, latent_dim, hidden_dim, dt).to(device)
+def train_latent_sde(X_train, y_train, input_dim, obs_dim=None, latent_dim=16, hidden_dim=32,
+                     dt=0.01, sde_steps=10, lr=1e-3, epochs=50, batch_size=32, device='cpu',
+                     drift_layers=None, diffusion_layers=None, **kwargs):
+    # obs_dim is alias for input_dim
+    if obs_dim is not None:
+        input_dim = obs_dim
+    model = LatentSDE(input_dim, latent_dim, hidden_dim, dt).to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     X_t = torch.tensor(X_train, dtype=torch.float32).to(device)
     y_t = torch.tensor(y_train, dtype=torch.float32).to(device)
@@ -81,7 +78,7 @@ def train_latent_sde(X_train, y_train, obs_dim, latent_dim=16, hidden_dim=32,
             batch_idx = indices[i:i+batch_size]
             Xb = X_t[batch_idx]
             yb = y_t[batch_idx]
-            pred, mean, logvar = model(Xb, steps=steps)
+            pred, mean, logvar = model(Xb, steps=sde_steps)
             pred = pred.squeeze()
             recon_loss = nn.MSELoss()(pred, yb)
             kl_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp()) / len(Xb)
