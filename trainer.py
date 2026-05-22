@@ -20,7 +20,7 @@ def convert_to_serializable(obj):
     return obj
 
 def create_sequences(returns_series, seq_len=10):
-    """Create input sequences and targets for a single ETF."""
+    """Create sliding windows of returns."""
     if len(returns_series) < seq_len + 1:
         return None, None
     X, y = [], []
@@ -29,7 +29,7 @@ def create_sequences(returns_series, seq_len=10):
         y.append(returns_series.iloc[i+1])
     X = np.array(X, dtype=np.float32)
     y = np.array(y, dtype=np.float32)
-    # Reshape X to (n_samples, seq_len, 1) for the model (obs_dim=1)
+    # Reshape X to (batch, seq_len, 1) for the model
     X = X.reshape(-1, seq_len, 1)
     return X, y
 
@@ -46,7 +46,7 @@ def main():
     for universe_name, tickers in config.UNIVERSES.items():
         print(f"\n=== Universe: {universe_name} (Neural SDE Latent) ===")
         returns = data_manager.prepare_returns_matrix(df, tickers)
-        if returns.empty or len(returns) < max(config.WINDOWS) + 100:
+        if returns.empty or len(returns) < max(config.WINDOWS) + config.SEQ_LEN + 10:
             print("  Insufficient data")
             all_results[universe_name] = {"top_etfs": []}
             continue
@@ -55,38 +55,34 @@ def main():
         window_results = {}
 
         for win in config.WINDOWS:
-            if len(returns) < win + 20:
+            if len(returns) < win + config.SEQ_LEN + 10:
                 print(f"  Skipping window {win}d (insufficient data)")
                 continue
             print(f"  Processing window {win}d...")
+            ret_win = returns.iloc[-win:]
             etf_scores = {}
             for etf in tickers:
-                if etf not in returns.columns:
+                if etf not in ret_win.columns:
                     continue
-                ret_series = returns[etf].iloc[-win:]
-                X, y = create_sequences(ret_series, seq_len=10)
-                if X is None or len(X) < 20:
+                series = ret_win[etf].dropna()
+                X, y = create_sequences(series, seq_len=config.SEQ_LEN)
+                if X is None or len(X) < 10:
+                    print(f"    {etf}: not enough sequences")
                     continue
-                # Split into train/val (80/20)
                 split = int(0.8 * len(X))
                 X_train, X_val = X[:split], X[split:]
                 y_train, y_val = y[:split], y[split:]
                 model = train_latent_sde(X_train, y_train,
-                                         obs_dim=1,
                                          latent_dim=config.LATENT_DIM,
                                          hidden_dim=config.HIDDEN_DIM,
-                                         drift_layers=config.DRIFT_NET_LAYERS,
-                                         diffusion_layers=config.DIFFUSION_NET_LAYERS,
-                                         dt=0.01,
-                                         n_steps=20,
+                                         dt=config.DT,
+                                         steps=config.STEPS,
                                          lr=config.LEARNING_RATE,
                                          epochs=config.EPOCHS,
                                          batch_size=config.BATCH_SIZE,
-                                         kl_weight=config.KL_WEIGHT,
                                          device=device)
-                # Predict for the most recent input sequence (last 10 days)
-                last_X = X[-1:].reshape(1, 10, 1)
-                pred = predict_latent_sde(model, last_X)[0, 0]
+                last_X = X[-1:].reshape(1, config.SEQ_LEN, 1)
+                pred = predict_latent_sde(model, last_X)[0]   # <-- FIXED: [0] not [0,0]
                 etf_scores[etf] = pred
             window_results[win] = etf_scores
             for etf, score in etf_scores.items():
@@ -117,7 +113,7 @@ def main():
         }
 
     Path("results").mkdir(exist_ok=True)
-    local_path = Path(f"results/neural_sde_latent_{today}.json")
+    local_path = Path(f"results/latent_sde_{today}.json")
     with open(local_path, "w") as f:
         json.dump(convert_to_serializable({"run_date": today, "universes": all_results}), f, indent=2)
 
