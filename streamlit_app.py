@@ -23,7 +23,7 @@ st.markdown('<div class="sub-header">Latent Stochastic Differential Equations | 
 st.sidebar.markdown("## 🌀 Latent SDE")
 st.sidebar.markdown(f"**Run Date:** `{st.session_state.get('run_date', 'Not loaded')}`")
 st.sidebar.markdown(f"**Next Trading Day:** `{next_trading_day()}`")
-st.sidebar.markdown(f"**Latent dim:** {config.LATENT_DIM} | **KL weight:** {config.KL_WEIGHT}")
+st.sidebar.markdown(f"**Latent dim:** {config.LATENT_DIM}")
 st.sidebar.markdown("**Windows evaluated:** 63, 252, 504, 1008, 2016, 4032 days (best per ETF)")
 
 OUTPUT_REPO = config.OUTPUT_REPO
@@ -39,7 +39,8 @@ def list_repo_files():
         return [f"Error: {e}"]
 
 def find_latest_json(files):
-    json_files = [f for f in files if f.endswith('.json') and 'neural_sde_latent_' in f]
+    # Corrected prefix to match the trainer output
+    json_files = [f for f in files if f.endswith('.json') and 'latent_sde_' in f]
     if not json_files:
         return None
     json_files.sort(reverse=True)
