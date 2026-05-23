@@ -2,7 +2,7 @@ name: Daily Neural SDE Latent Run
 
 on:
   schedule:
-    - cron: '20 00 * * 1-5'
+    - cron: '20 00 * * 1-6'
   workflow_dispatch:
 
 jobs:
